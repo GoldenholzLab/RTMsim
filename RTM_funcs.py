@@ -365,7 +365,7 @@ def test_this_idea(howMany=10000,DRG=0.3,N=200,baseTF=False,doingFAKE=False):
         #baseTF = False       
         runSet_with_HandB(howMany=howMany,hist=thisHist,baseTF=baseTF,minSz=4,N=N,years=3,DRG=DRG,doPIX=False,doingFAKE=doingFAKE)
 
-def runSet_with_HandB(howMany,hist,baseTF,minSz,N,years,DRG=.2,PCB=0,baseline=2,test=3,numCPUs=9,doPIX=True,printTF=True,doingFAKE=False):
+def runSet_with_HandB(howMany,hist,baseTF,minSz,N,years,DRG=.2,PCB=0,baseline=2,test=3,numCPUs=9,doPIX=True,printTF=True,doingFAKE=False,saveFile=False,saveFn=''):
     #fname='Fig5-RCT.tiff'
     with Parallel(n_jobs=numCPUs, verbose=False) as par:
         X = par(delayed(run1trial_with_hist_and_base)(minSz,N,DRG,PCB,baseline,test,hist,baseTF,years,doingFAKE) for _ in trange(howMany,leave=False))
@@ -375,7 +375,8 @@ def runSet_with_HandB(howMany,hist,baseTF,minSz,N,years,DRG=.2,PCB=0,baseline=2,
     #mpc_pow = np.round(100*np.mean(X2[:,5]))
     rr50_pow = np.mean(X2[:,4])
     mpc_pow = np.mean(X2[:,5])
-    
+    if saveFile==True:
+        np.savetxt(saveFn, X2[:,4:6], delimiter=',', newline='\n', header='rr50_yes,mpc_yes')
     if doPIX==True:
         plt.boxplot(X3)
         plt.xticks([1,2,3,4],['RR50_placebo','RR50_drug','MPC_placebo','MPC_drug'])
@@ -909,22 +910,26 @@ def try_one_at_a_time(SF,hist,baseTF,Cr):
 
     return RTMfrac
 
-def tryOut_fracs(SF,Cr,baseTF=True,hist=1,reps=5000):
+def tryOut_fracs(SF,Cr,baseTF=True,hist=1,reps=5000,numCPUs = 9):
     #SF = 3
     #hist = 1
     #baseTF = True
     #Cr = 4
     #reps = 5000
     
-    fraclist = np.array([try_one_at_a_time(SF,hist,baseTF,Cr) for _ in range(reps)],dtype=float)
+    with Parallel(n_jobs=numCPUs, verbose=False) as par:
+        temp = par(delayed(try_one_at_a_time)(SF,hist,baseTF,Cr) for _ in range(reps))
+    fraclist = np.array(temp,dtype=float)
+    #fraclist = np.array([try_one_at_a_time(SF,hist,baseTF,Cr) for _ in range(reps)],dtype=float)
+
     medF = np.nanmean(fraclist)
     return medF
 
-def build_a_set_of_fracs(fname,baseTF,hist,reps):
+def build_a_set_of_fracs(fname,baseTF,hist,reps,numCPUs = 10):
     z = pd.DataFrame()
     for si,SF in tqdm(enumerate(np.linspace(1,10,10))):
         for ci,Cr in tqdm(enumerate(np.linspace(0,8,9))):
-            z = pd.concat([z,pd.DataFrame({'SF':[SF],'Cr':[Cr],'Frac':tryOut_fracs(SF,Cr,baseTF,hist,reps)})])
+            z = pd.concat([z,pd.DataFrame({'SF':[SF],'Cr':[Cr],'Frac':tryOut_fracs(SF,Cr,baseTF,hist,reps,numCPUs)})])
     print(z)
     z.to_csv(fname, index_label=False)
 
@@ -1119,7 +1124,7 @@ def draw_all_fracSets():
     plt.show()
     
 
-def build_a_set_of_frac_noSF(studyChances=1):
+def build_a_set_of_frac_noSF(studyChances=1,numCPUs=9):
     reps = 5000
     trialDur = 5
     number_of_months = studyChances-1 + trialDur
@@ -1133,23 +1138,55 @@ def build_a_set_of_frac_noSF(studyChances=1):
             
         number_of_months+=hist
         fn = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}.csv'
+        fn2= f'fracsSetAll_{number_of_months}_{baseTF}_{hist}_full.csv'
         z = pd.DataFrame()
+        z2 = pd.DataFrame()
         SF = -1
         for ci,Cr in tqdm(enumerate(np.linspace(0,8,9))):
-            fraclist = np.array([try_one_at_a_time_manyFracs(SF,hist,baseTF,Cr,number_of_months) for _ in range(reps)],dtype=float)
+            with Parallel(n_jobs=numCPUs, verbose=False) as par:
+                temp = par(delayed(try_one_at_a_time_manyFracs)(SF,hist,baseTF,Cr,number_of_months) for _ in range(reps))
+            fraclist = np.array(temp,dtype=float)
+        
+            #fraclist = np.array([try_one_at_a_time_manyFracs(SF,hist,baseTF,Cr,number_of_months) for _ in range(reps)],dtype=float)
             medF = np.nanmean(fraclist,axis=0)
             PC = np.nanmedian(fraclist[:,6])
             rrFrac = np.nanmean(fraclist[:,6]>=50)
             zT = pd.DataFrame({'Cr':[Cr]*6,'hist':[hist]*6,'baseTF':[baseTF]*6,'frac':medF[0:6],'fracInd':np.arange(6),'PC':PC,'rrFrac':rrFrac})
             z = pd.concat([z,zT])
+            for littleI in range(7):
+                z2 =  pd.concat([z2,pd.DataFrame({'Cr':[Cr]*reps,'hist':[hist]*reps,'baseTF':[baseTF]*reps,
+                                'fracInd':littleI,'PC':fraclist[:,6],'rrFrac':fraclist[:,6]>50,'frac0':fraclist[:,0]})])
+            
             #z = pd.concat([z,pd.DataFrame({'SF':[SF],'Cr':[Cr],'hist':[hist],'baseTF':[baseTF],
             #                            'RTM1':medF[0],'nRTMu1':medF[1],'nRTMd1':medF[2],
             #                            'RTM0':medF[3],'nRTMd1':medF[4],'nRTMu1':medF[5]})])
         print(fn)
         z.to_csv(fn, index=False)
+        z2.to_csv(fn2,index=False)
 
-
-def draw_all_fracSets_noSF(showFull=True,studyChances=1):
+def go_read_pow_data(studyChances,fnOUT):
+    trialDur = 5
+    baseTFlist = [True,False]
+    histlist = [1,3]
+    reps = 1000
+    df = pd.DataFrame()
+    for bi,baseTF in tqdm(enumerate(baseTFlist)):
+        hist = histlist[bi]
+        for minSz in range(9):
+            fn = f'RCT_eff_{baseTF}_{minSz}_{studyChances}_keeper.csv'
+            data = np.genfromtxt(fn, delimiter=',', skip_header=1)
+            temp = pd.DataFrame({'rr50_pow':data[:,0],'mpc_pow':data[:,1]})
+            for _ in range(reps):
+                sample = temp.sample(n=1000, replace=True, axis=0)
+                samp2 = pd.DataFrame({'rr50_pow':[np.mean(sample.rr50_pow)],
+                                      'mpc_pow':[np.mean(sample.mpc_pow)],
+                                      'minSz':[minSz],
+                                      'baseTF':[baseTF]})
+                df = pd.concat([df,samp2])
+    df.to_csv(fnOUT,index=False)
+                
+def draw_all_fracSets_noSF(showFull=True,studyChances=1,with_error=False):
+    
     trialDur = 5
     number_of_months = studyChances-1 + trialDur
     baseTFlist = [True,False]
@@ -1157,6 +1194,7 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
     text_str = ['Improved - RTM', 'Improved - upAndWayDown','Improved - downAndWayDown',
                 'Worsened - RTM', 'Worsened - downAndWayUp','Worsened - upAndWayUp']
     z2 = pd.DataFrame()
+    z2FULL = pd.DataFrame()
     for i in range(2):
         hist= histlist[i]
         baseTF=baseTFlist[i] 
@@ -1166,7 +1204,14 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
         z['hist'] = hist
         z['baseTF'] = baseTF
         z2= pd.concat([z2,z])
-    
+        if with_error==True:
+            fn2 = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}_full.csv'
+            zFULL = pd.read_csv(fn2)
+            zFULL['hist'] = hist
+            zFULL['baseTF'] = baseTF
+            z2FULL= pd.concat([z2FULL,zFULL])
+            
+
     inds = np.array(z2['fracInd'])
     new_list = [text_str[i] for i in inds]
     z2['type'] = new_list
@@ -1174,7 +1219,15 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
     z2['frac'] *=100
     z2['Baseline included'] = z2['baseTF'].apply(lambda x: 'with' if x else 'without')
     z2 = z2.rename(columns={'Cr':'Minimum rate (sz./mo.)','baseTF':'Include baseline','PC':'Median % change','frac':'Fraction of total','rrFrac':'RR50 %'})
-
+    if with_error==True:
+        #inds = np.array(z2FULL['fracInd'])
+        #new_list = [text_str[i] for i in inds]
+        #z2FULL['type'] = new_list
+        z2FULL['rrFrac'] *= 100
+        z2FULL['frac0'] *=100
+        z2FULL['Baseline included'] = z2FULL['baseTF'].apply(lambda x: 'with' if x else 'without')
+        z2FULL = z2FULL.rename(columns={'Cr':'Minimum rate (sz./mo.)','baseTF':'Include baseline','PC':'Median % change','frac0':'Fraction of total','rrFrac':'RR50 %'})
+            
     # this is for power calculations
     df = pd.read_csv('Low-high-testv5.csv')
     df['pow_m'] *= 100
@@ -1186,8 +1239,16 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
     if showFull==False:
         plt.subplots(nrows = 3, ncols=2, figsize=(8,8),sharex=True)
         plt.subplot(3,2,1)
-        ax = sns.barplot(data=z2[z2['fracInd']==0],x='Minimum rate (sz./mo.)',y='Fraction of total',
-            hue='Baseline included',palette=['black','gray'])
+        if with_error==False:
+            ax = sns.barplot(data=z2[z2['fracInd']==0],x='Minimum rate (sz./mo.)',y='Fraction of total',
+                hue='Baseline included',palette=['black','gray'])
+        else:
+            ax = sns.barplot(data=z2FULL,x='Minimum rate (sz./mo.)',y='Fraction of total',
+                hue='Baseline included',palette=['black','gray'],errorbar=('ci',95))
+
+            
+        #print(z2[z2['fracInd']==0])
+        
         ax.axes.xaxis.set_ticklabels([])
         ax.legend().set_visible(False)
         ax.set(xlabel=None)
@@ -1195,8 +1256,13 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
         plt.ylim(0,60)
         plt.title('Fraction of RTM vs eligibility')
         plt.subplot(3,2,2)
-        ax = sns.barplot(data=z2[z2['fracInd']==0],x='Minimum rate (sz./mo.)',y='Fraction of total',
-            hue='Baseline included',palette=['black','gray'])
+        if with_error==False:
+            ax = sns.barplot(data=z2[z2['fracInd']==0],x='Minimum rate (sz./mo.)',y='Fraction of total',
+                hue='Baseline included',palette=['black','gray'])
+        else:
+            ax = sns.barplot(data=z2FULL,x='Minimum rate (sz./mo.)',y='Fraction of total',
+                hue='Baseline included',palette=['black','gray'],errorbar=('ci',95))
+
         ax.axes.xaxis.set_ticklabels([])
         ax.legend().set_visible(False)
         ax.set(xlabel=None)
@@ -1204,8 +1270,13 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
         plt.ylim(0,60)
         plt.title('Fraction of RTM vs eligibility')
         plt.subplot(3,2,3)
-        ax = sns.barplot(data=z2,x='Minimum rate (sz./mo.)',y='Median % change',hue='Baseline included',
-                    palette=sns.color_palette(['black','gray']))
+        if with_error==False:
+            ax = sns.barplot(data=z2,x='Minimum rate (sz./mo.)',y='Median % change',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']))
+        else:
+            ax = sns.barplot(data=z2FULL,x='Minimum rate (sz./mo.)',y='Median % change',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']),errorbar=('ci',95))
+
         ax.axes.xaxis.set_ticklabels([])
         ax.legend().set_visible(False)
         ax.set(xlabel=None)
@@ -1213,30 +1284,53 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
         plt.ylim(-40,40)
         plt.title('MPC vs eligibility')
         plt.subplot(3,2,4)
-        ax = sns.barplot(data=z2,x='Minimum rate (sz./mo.)',y='RR50 %',hue='Baseline included',
-                    palette=sns.color_palette(['black','gray']))
+        if with_error==False:
+            ax = sns.barplot(data=z2,x='Minimum rate (sz./mo.)',y='RR50 %',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']))
+        else:
+            ax = sns.barplot(data=z2FULL,x='Minimum rate (sz./mo.)',y='RR50 %',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']),errorbar=('ci',95))
+
         ax.axes.xaxis.set_ticklabels([])
         ax.set(xlabel=None)
         plt.grid(True)
         plt.ylim(0,25)
         plt.title('RR50 vs eligibility')
         plt.subplot(3,2,5)
-        ax = sns.barplot(data=df,x='Minimum rate (sz./mo.)',y='MPC Power %',hue='Baseline included',
-                    palette=sns.color_palette(['black','gray']))
+        if with_error==False:
+            ax = sns.barplot(data=df,x='Minimum rate (sz./mo.)',y='MPC Power %',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']))
+        else:
+            zPOW = pd.read_csv(f'RTM_eff_boot_keeper_{studyChances}.csv')
+            zPOW['mpc_pow'] *= 100
+            zPOW['rr50_pow'] *= 100
+            zPOW['Baseline included'] = zPOW['baseTF'].apply(lambda x: 'with' if x else 'without')
+            zPOW = zPOW.rename(columns={'mpc_pow':'MPC Power %','rr50_pow':'RR50 Power %','minSz':'Minimum rate (sz./mo.)','baseTF':'Include baseline'})
+
+            ax = sns.barplot(data=zPOW,x='Minimum rate (sz./mo.)',y='MPC Power %',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']),errorbar=('ci',95))
+
+        print(df)
+        print('done')
         ax.legend().set_visible(False)
         plt.plot([-.5, 8.5],[90,90],'k--')
-        plt.title('MPC Efficacy vs. min. rate (N=400)')
+        plt.title('MPC Efficacy vs. min. rate')
         plt.ylim(0,100)
         plt.grid(True)
         plt.subplot(3,2,6)
-        ax = sns.barplot(data=df,x='Minimum rate (sz./mo.)',y='RR50 Power %',hue='Baseline included',
-                    palette=sns.color_palette(['black','gray']))
+        if with_error==False:
+            ax = sns.barplot(data=df,x='Minimum rate (sz./mo.)',y='RR50 Power %',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']))
+        else:
+            ax = sns.barplot(data=zPOW,x='Minimum rate (sz./mo.)',y='RR50 Power %',hue='Baseline included',
+                        palette=sns.color_palette(['black','gray']),errorbar=('ci',95))
         ax.legend().set_visible(False)
         plt.plot([-.5, 8.5],[90,90],'k--')
-        plt.title('RR50 Efficacy vs. min. rate (N=400)')
+        plt.title('RR50 Efficacy vs. min. rate')
         plt.ylim(0,100)
         plt.grid(True)
         plt.tight_layout(pad=1)
+    
     else:
         sns.catplot(data=z2,kind='bar',x='Minimum rate (sz./mo.)',y='Fraction of total',
                     hue='type',col='Include baseline',palette=['green','cyan','blue','red','purple','yellow'])
@@ -1252,16 +1346,18 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1):
                     palette=sns.color_palette(['black']))
         plt.grid(True)
         plt.ylim(0,30)
+        
         plt.show()
 
-def make_RCT_efficiency_check(fn,howLong=1):
+    
+def make_RCT_efficiency_check(fn,howLong=1,saveFile=False):
     reps=5000
     DRG=0.2
     N=400
     numCPUs=9
     PCB=0
     years=howLong/12
-
+    
     df = pd.DataFrame()
     for baseTF in [True,False]:
         for minSz in [0,1,2,3,4,5,6,7,8]:
@@ -1270,9 +1366,10 @@ def make_RCT_efficiency_check(fn,howLong=1):
             else:
                 thisHist = 3
             
+            saveFn = f'RCT_eff_{baseTF}_{minSz}_{howLong}_keeper.csv'
             print(f'{PCB} {thisHist}')
             rr50_pow,mpc_pow,diffR,diffM,PCB_R,PCB_M = runSet_with_HandB(howMany=reps,hist=thisHist,baseTF=baseTF,minSz=minSz,N=N,years=years,DRG=DRG,PCB=PCB,
-                    numCPUs=numCPUs,doPIX=False,printTF=True)
+                    numCPUs=numCPUs,doPIX=False,printTF=True,saveFile=saveFile,saveFn=saveFn)
             tempd = pd.DataFrame({'N':[N],'minSz':[minSz],'DRG':[DRG],'PCB':[PCB],'history':[thisHist],'baseTF':[baseTF],'diffR':[diffR],'diffM':[diffM],'PCB_R':[PCB_R],'PCB_M':[PCB_M],'pow_r':[rr50_pow],'pow_m':[mpc_pow]})
             df = pd.concat([df,tempd])
   
