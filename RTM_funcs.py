@@ -1124,7 +1124,7 @@ def draw_all_fracSets():
     plt.show()
     
 
-def build_a_set_of_frac_noSF(studyChances=1,numCPUs=9):
+def build_a_set_of_frac_noSF(studyChances=1,numCPUs=9,extraCalc=False):
     reps = 5000
     trialDur = 5
     number_of_months = studyChances-1 + trialDur
@@ -1137,12 +1137,20 @@ def build_a_set_of_frac_noSF(studyChances=1,numCPUs=9):
             baseTF = False
             
         number_of_months+=hist
-        fn = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}.csv'
-        fn2= f'fracsSetAll_{number_of_months}_{baseTF}_{hist}_full.csv'
+        if extraCalc==True:
+            # extra caluclations requested by reviewer of paper
+            fn = f'fracsSetAll_extra_{number_of_months}_{baseTF}_{hist}.csv'
+            fn2= f'fracsSetAll_extra_{number_of_months}_{baseTF}_{hist}_full.csv'
+            Crlist = np.array([4,3,2,1.5,1,1/3,1/13])
+        else:
+            fn = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}.csv'
+            fn2= f'fracsSetAll_{number_of_months}_{baseTF}_{hist}_full.csv'
+            Crlist = np.linspace(0,8,9)
         z = pd.DataFrame()
         z2 = pd.DataFrame()
         SF = -1
-        for ci,Cr in tqdm(enumerate(np.linspace(0,8,9))):
+        
+        for ci,Cr in tqdm(enumerate(Crlist)):
             with Parallel(n_jobs=numCPUs, verbose=False) as par:
                 temp = par(delayed(try_one_at_a_time_manyFracs)(SF,hist,baseTF,Cr,number_of_months) for _ in range(reps))
             fraclist = np.array(temp,dtype=float)
@@ -1164,16 +1172,23 @@ def build_a_set_of_frac_noSF(studyChances=1,numCPUs=9):
         z.to_csv(fn, index=False)
         z2.to_csv(fn2,index=False)
 
-def go_read_pow_data(studyChances,fnOUT):
+def go_read_pow_data(studyChances,fnOUT,extraCalc=False):
     trialDur = 5
     baseTFlist = [True,False]
     histlist = [1,3]
     reps = 1000
     df = pd.DataFrame()
+    if extraCalc==True:
+        filePre = 'RCT_eff_extra'
+        Crlist = np.array([4,3,2,1.5,1,1/3,1/13])
+    else:
+        filePre = 'RCT_eff'
+        Crlist = np.linspace(0,8,9)
+        
     for bi,baseTF in tqdm(enumerate(baseTFlist)):
         hist = histlist[bi]
-        for minSz in range(9):
-            fn = f'RCT_eff_{baseTF}_{minSz}_{studyChances}_keeper.csv'
+        for minSz in Crlist:
+            fn = f'{filePre}_{baseTF}_{minSz}_{studyChances}_keeper.csv'
             data = np.genfromtxt(fn, delimiter=',', skip_header=1)
             temp = pd.DataFrame({'rr50_pow':data[:,0],'mpc_pow':data[:,1]})
             for _ in range(reps):
@@ -1185,7 +1200,14 @@ def go_read_pow_data(studyChances,fnOUT):
                 df = pd.concat([df,samp2])
     df.to_csv(fnOUT,index=False)
                 
-def draw_all_fracSets_noSF(showFull=True,studyChances=1,with_error=False):
+def draw_all_fracSets_noSF(showFull=True,studyChances=1,with_error=False,extraCalc=False,fnEff=''):
+    if extraCalc==False:
+        fnPre = 'RCT_eff'
+    else:
+        fnPre = 'RCT_eff_extra'
+    
+    if fnEff=='':
+        fnEff=f'{fnPre}_{studyChances}.csv'
     
     trialDur = 5
     number_of_months = studyChances-1 + trialDur
@@ -1199,13 +1221,19 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1,with_error=False):
         hist= histlist[i]
         baseTF=baseTFlist[i] 
         number_of_months+=hist
-        fn = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}.csv'
+        if extraCalc==False:
+            fn = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}.csv'
+        else:
+            fn = f'fracsSetAll_extra_{number_of_months}_{baseTF}_{hist}.csv'
         z = pd.read_csv(fn)
         z['hist'] = hist
         z['baseTF'] = baseTF
         z2= pd.concat([z2,z])
         if with_error==True:
-            fn2 = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}_full.csv'
+            if extraCalc==False:
+                fn2 = f'fracsSetAll_{number_of_months}_{baseTF}_{hist}_full.csv'
+            else:
+                fn2 = f'fracsSetAll_extra_{number_of_months}_{baseTF}_{hist}_full.csv'
             zFULL = pd.read_csv(fn2)
             zFULL['hist'] = hist
             zFULL['baseTF'] = baseTF
@@ -1229,7 +1257,7 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1,with_error=False):
         z2FULL = z2FULL.rename(columns={'Cr':'Minimum rate (sz./mo.)','baseTF':'Include baseline','PC':'Median % change','frac0':'Fraction of total','rrFrac':'RR50 %'})
             
     # this is for power calculations
-    df = pd.read_csv('Low-high-testv5.csv')
+    df = pd.read_csv(fnEff)
     df['pow_m'] *= 100
     df['pow_r'] *= 100
     df['Baseline included'] = df['baseTF'].apply(lambda x: 'with' if x else 'without')
@@ -1350,7 +1378,7 @@ def draw_all_fracSets_noSF(showFull=True,studyChances=1,with_error=False):
         plt.show()
 
     
-def make_RCT_efficiency_check(fn,howLong=1,saveFile=False):
+def make_RCT_efficiency_check(fn,howLong=1,saveFile=False,extraCalc=False):
     reps=5000
     DRG=0.2
     N=400
@@ -1358,15 +1386,22 @@ def make_RCT_efficiency_check(fn,howLong=1,saveFile=False):
     PCB=0
     years=howLong/12
     
+    if extraCalc == True:
+        minSzList = [1/13,1/3,1,1.5,2,3,4]
+        prefixTxt = 'RCT_eff'
+    else:
+        minSzList = [0,1,2,3,4,5,6,7,8]
+        prefixTxt = 'RCT_eff_extra'
+        
     df = pd.DataFrame()
     for baseTF in [True,False]:
-        for minSz in [0,1,2,3,4,5,6,7,8]:
+        for minSz in minSzList:
             if baseTF==True:
                 thisHist = 1
             else:
                 thisHist = 3
             
-            saveFn = f'RCT_eff_{baseTF}_{minSz}_{howLong}_keeper.csv'
+            saveFn = f'{prefixTxt}_{baseTF}_{minSz}_{howLong}_keeper.csv'
             print(f'{PCB} {thisHist}')
             rr50_pow,mpc_pow,diffR,diffM,PCB_R,PCB_M = runSet_with_HandB(howMany=reps,hist=thisHist,baseTF=baseTF,minSz=minSz,N=N,years=years,DRG=DRG,PCB=PCB,
                     numCPUs=numCPUs,doPIX=False,printTF=True,saveFile=saveFile,saveFn=saveFn)
@@ -1410,7 +1445,11 @@ def build_minSz_findN_pow(minSz,fn):
         else:
             thisHist = 3
         
-        for N in [350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1050,1100,1150,1200]:
+        if minSz<1.5:
+            Nlist = [450,500,550,600,650,700,750,800,850,900,950,1000,1050,1100,1150,1200,1250,1300,1350,1400,1450,1500]
+        else:
+            Nlist = [350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1050,1100,1150,1200]
+        for N in Nlist:
             print(f'{baseTF} {N}')            
             rr50_pow,mpc_pow,diffR,diffM,PCB_R,PCB_M = runSet_with_HandB(howMany=reps,hist=thisHist,baseTF=baseTF,minSz=minSz,N=N,years=3,DRG=DRG,PCB=PCB,
                     numCPUs=numCPUs,doPIX=False,printTF=True)
