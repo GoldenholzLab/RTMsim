@@ -161,3 +161,4 @@ cython_debug/
 
 *.csv
 Fig2.png
+*.tiff
